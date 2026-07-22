@@ -1,0 +1,655 @@
+schema_version: 1
+service:
+  id: tile-planner-service
+  responsibility: Plan tile materials and layouts on imported building surfaces and derive installation quantities.
+  owns:
+    - tile projects
+    - tile material assignments
+    - tile layouts
+    - tile-specific interpretation of surface impacts
+    - tile installation quantities
+  does_not_own:
+    - canonical building geometry
+    - plumbing design
+    - electrical design
+    - customer or object cards
+    - estimate pricing
+
+modules:
+  - id: tile-project-model
+    name: Tile Project Model
+    layer: domain
+    responsibility: Own the durable editable model of a tile planning project.
+    owns:
+      - TileProject
+      - SurfaceReference
+      - MaterialAssignment
+      - SurfaceLayout
+      - ImpactBinding
+    exposes:
+      - createTileProject
+      - updateTileProject
+      - getProjectRevision
+    depends_on:
+      - shared-kernel
+    used_by:
+      - project-invariants
+      - app-state
+      - persistence
+      - quantity-calculations
+    data_in:
+      - project commands
+      - imported surface references
+    data_out:
+      - validated tile project model
+    forbidden_dependencies:
+      - editor-ui
+      - infrastructure
+      - svg-renderer
+    extension_points:
+      - multi-room projects
+      - tile zones
+      - decorative inserts
+    invariant_files:
+      - src/domain/invariants/projectInvariants.ts
+    config_files:
+      - src/domain/config/domainConstants.ts
+
+  - id: external-contracts
+    name: External Platform Contracts
+    layer: shared
+    responsibility: Define DTOs consumed from geometry, plumbing, electrical, and project services.
+    owns:
+      - SurfaceDto
+      - SurfaceImpactDto
+      - ObjectContextDto
+    exposes:
+      - external contract types
+      - contract version constants
+    depends_on:
+      - shared-kernel
+    used_by:
+      - surface-import
+      - impact-import
+    data_in:
+      - platform payloads
+    data_out:
+      - typed external DTOs
+    forbidden_dependencies:
+      - editor-ui
+      - app-state
+    extension_points:
+      - shared contracts package migration
+    invariant_files:
+      - src/api-contracts/external/externalContractInvariants.ts
+    config_files:
+      - src/api-contracts/external/contractVersions.ts
+
+  - id: surface-import
+    name: Surface Import
+    layer: application
+    responsibility: Validate and adapt canonical platform surfaces into tile-planner read models.
+    owns:
+      - surface adaptation
+      - source revision tracking
+    exposes:
+      - importSurfaces
+      - refreshSurfaceReferences
+    depends_on:
+      - external-contracts
+      - project-invariants
+      - geometry
+    used_by:
+      - app-state
+      - persistence
+    data_in:
+      - SurfaceDto
+    data_out:
+      - imported surface references
+    forbidden_dependencies:
+      - editor-ui
+      - svg-renderer
+    extension_points:
+      - incremental surface updates
+    invariant_files:
+      - src/surface-import/surfaceImportInvariants.ts
+    config_files: []
+
+  - id: impact-import
+    name: Surface Impact Import
+    layer: application
+    responsibility: Validate and adapt external penetrations, cutouts, and notches for tile planning.
+    owns:
+      - imported impact snapshots
+      - source revision tracking
+    exposes:
+      - importSurfaceImpacts
+      - refreshImpactBindings
+    depends_on:
+      - external-contracts
+      - project-invariants
+    used_by:
+      - tile-operations
+      - app-state
+    data_in:
+      - SurfaceImpactDto
+    data_out:
+      - imported impact bindings
+    forbidden_dependencies:
+      - editor-ui
+      - svg-renderer
+    extension_points:
+      - HVAC impacts
+      - furniture impacts
+    invariant_files:
+      - src/impact-import/impactImportInvariants.ts
+    config_files: []
+
+  - id: geometry
+    name: Tile Geometry
+    layer: domain
+    responsibility: Provide unit-safe geometry primitives, clipping, transforms, and intersection helpers.
+    owns:
+      - geometry primitives
+      - polygon clipping
+      - transforms
+      - intersection tests
+    exposes:
+      - clipPolygon
+      - transformPolygon
+      - calculateArea
+      - intersectImpactWithTile
+    depends_on:
+      - shared-kernel
+    used_by:
+      - surface-import
+      - tiling-engine
+      - tile-operations
+      - svg-renderer
+    data_in:
+      - millimeter geometry
+    data_out:
+      - derived geometry
+    forbidden_dependencies:
+      - editor-ui
+      - app-state
+      - persistence
+    extension_points:
+      - curved surfaces
+      - polygon holes
+    invariant_files:
+      - src/geometry/invariants/geometryInvariants.ts
+    config_files:
+      - src/geometry/config/geometryConstants.ts
+
+  - id: tile-materials
+    name: Tile Materials
+    layer: domain
+    responsibility: Own tile product dimensions and appearance mapping settings.
+    owns:
+      - TileMaterial
+      - TileAppearance
+      - texture mapping modes
+    exposes:
+      - createTileMaterial
+      - updateTileMaterial
+      - assignMaterialToSurface
+    depends_on:
+      - shared-kernel
+    used_by:
+      - tiling-engine
+      - texture-engine
+      - quantity-calculations
+      - app-state
+    data_in:
+      - material commands
+    data_out:
+      - tile material definitions
+    forbidden_dependencies:
+      - infrastructure
+      - editor-ui
+    extension_points:
+      - multi-face products
+      - bookmatch patterns
+    invariant_files:
+      - src/domain/invariants/materialInvariants.ts
+    config_files:
+      - src/domain/config/materialDefaults.ts
+
+  - id: tiling-engine
+    name: Tiling Engine
+    layer: domain
+    responsibility: Generate tile instances and cut geometry for a surface and layout.
+    owns:
+      - tile grid generation
+      - layout patterns
+      - cut classification
+    exposes:
+      - generateTileLayout
+      - recalculateSurfaceLayout
+    depends_on:
+      - geometry
+      - tile-materials
+      - tile-project-model
+    used_by:
+      - tile-operations
+      - quantity-calculations
+      - svg-renderer
+    data_in:
+      - surface geometry
+      - tile material
+      - layout parameters
+    data_out:
+      - derived tile instances
+    forbidden_dependencies:
+      - editor-ui
+      - persistence
+      - infrastructure
+    extension_points:
+      - herringbone
+      - diagonal layouts
+      - decorative zones
+    invariant_files:
+      - src/tiling/invariants/layoutInvariants.ts
+    config_files:
+      - src/tiling/config/layoutDefaults.ts
+
+  - id: texture-engine
+    name: Texture Engine
+    layer: domain
+    responsibility: Derive texture transforms for tile instances without loading files or rendering SVG.
+    owns:
+      - per-tile mapping
+      - continuous mapping
+      - crop and rotation transforms
+    exposes:
+      - deriveTextureMapping
+    depends_on:
+      - geometry
+      - tile-materials
+      - tiling-engine
+    used_by:
+      - svg-renderer
+    data_in:
+      - tile instances
+      - appearance settings
+    data_out:
+      - texture mapping descriptors
+    forbidden_dependencies:
+      - infrastructure
+      - editor-ui
+      - browser APIs
+    extension_points:
+      - randomized faces
+      - perspective correction descriptors
+    invariant_files:
+      - src/texture-engine/textureInvariants.ts
+    config_files:
+      - src/texture-engine/textureDefaults.ts
+
+  - id: tile-operations
+    name: Tile Operations
+    layer: domain
+    responsibility: Convert imported surface impacts into tile installation operations.
+    owns:
+      - circular holes
+      - rectangular cutouts
+      - edge notches
+      - complex cuts
+    exposes:
+      - deriveTileOperations
+    depends_on:
+      - impact-import
+      - geometry
+      - tiling-engine
+    used_by:
+      - quantity-calculations
+      - svg-renderer
+    data_in:
+      - imported impacts
+      - generated tile instances
+    data_out:
+      - tile operations
+    forbidden_dependencies:
+      - editor-ui
+      - persistence
+    extension_points:
+      - mitre cuts
+      - external corners
+    invariant_files:
+      - src/tile-operations/operationInvariants.ts
+    config_files:
+      - src/tile-operations/operationRules.ts
+
+  - id: quantity-calculations
+    name: Quantity Calculations
+    layer: domain
+    responsibility: Derive material and labor quantities from the validated tile project.
+    owns:
+      - tile counts
+      - waste
+      - adhesive
+      - grout
+      - spacers
+      - tile operations quantities
+    exposes:
+      - deriveSurfaceQuantities
+      - deriveProjectQuantities
+    depends_on:
+      - tile-project-model
+      - tiling-engine
+      - tile-operations
+      - tile-materials
+    used_by:
+      - export-contracts
+      - editor-ui
+    data_in:
+      - validated project
+      - derived tile instances
+      - tile operations
+    data_out:
+      - quantity result
+    forbidden_dependencies:
+      - editor-ui
+      - persistence
+      - infrastructure
+    extension_points:
+      - labor norms
+      - regional coefficients
+    invariant_files:
+      - src/calculations/invariants/calculationInvariants.ts
+    config_files:
+      - src/calculations/config/calculationRates.ts
+
+  - id: project-invariants
+    name: Project Invariants
+    layer: domain
+    responsibility: Validate references, units, geometry, revisions, materials, layouts, and impacts.
+    owns:
+      - project validation
+      - cross-module invariant checks
+    exposes:
+      - validateTileProject
+      - assertTileProject
+    depends_on:
+      - tile-project-model
+      - geometry
+      - tile-materials
+    used_by:
+      - surface-import
+      - impact-import
+      - persistence
+      - app-state
+    data_in:
+      - tile project model
+    data_out:
+      - validation result
+    forbidden_dependencies:
+      - editor-ui
+      - infrastructure
+    extension_points:
+      - backend validation parity
+    invariant_files:
+      - src/domain/invariants/projectInvariants.ts
+      - src/domain/invariants/referenceInvariants.ts
+    config_files: []
+
+  - id: persistence
+    name: Persistence
+    layer: infrastructure
+    responsibility: Serialize, migrate, validate, and deserialize editable tile projects.
+    owns:
+      - schema version
+      - migrations
+      - serializers
+      - deserializers
+    exposes:
+      - serializeTileProject
+      - deserializeTileProject
+      - migrateTileProject
+    depends_on:
+      - tile-project-model
+      - project-invariants
+    used_by:
+      - app-state
+      - backend-adapters
+    data_in:
+      - project model or saved payload
+    data_out:
+      - validated project model or serialized payload
+    forbidden_dependencies:
+      - editor-ui
+      - svg-renderer
+    extension_points:
+      - autosave
+      - offline storage
+    invariant_files:
+      - src/persistence/persistenceInvariants.ts
+    config_files:
+      - src/persistence/schemaVersion.ts
+
+  - id: export-contracts
+    name: Estimate Export Contracts
+    layer: application
+    responsibility: Map derived tile quantities to versioned payloads for the estimate service.
+    owns:
+      - quantity export DTOs
+      - export mapping
+    exposes:
+      - buildEstimateQuantitiesPayload
+    depends_on:
+      - quantity-calculations
+      - shared-kernel
+    used_by:
+      - backend-adapters
+      - editor-ui
+    data_in:
+      - project quantity result
+    data_out:
+      - estimate service payload
+    forbidden_dependencies:
+      - svg-renderer
+      - persistence internals
+    extension_points:
+      - pricing catalog references
+    invariant_files:
+      - src/api-contracts/export/exportContractInvariants.ts
+    config_files:
+      - src/api-contracts/export/contractVersions.ts
+
+  - id: app-state
+    name: Application State
+    layer: application
+    responsibility: Own project state, selection, commands, undo/redo, and dirty status.
+    owns:
+      - editor store
+      - commands
+      - undo and redo
+      - selection
+    exposes:
+      - dispatchCommand
+      - selectSurface
+      - undo
+      - redo
+    depends_on:
+      - tile-project-model
+      - project-invariants
+      - surface-import
+      - impact-import
+      - persistence
+    used_by:
+      - editor-ui
+    data_in:
+      - user commands
+      - imported platform data
+    data_out:
+      - application view state
+    forbidden_dependencies:
+      - svg-renderer internals
+      - browser storage APIs
+    extension_points:
+      - collaborative commands
+    invariant_files:
+      - src/app-state/commandInvariants.ts
+    config_files:
+      - src/app-state/appStateDefaults.ts
+
+  - id: asset-adapter
+    name: Asset Adapter
+    layer: infrastructure
+    responsibility: Upload and retrieve tile reference images and return stable asset identifiers.
+    owns:
+      - file upload adaptation
+      - object URL lifecycle
+    exposes:
+      - uploadTileReference
+      - resolveTileReferenceUrl
+    depends_on:
+      - tile-materials
+    used_by:
+      - editor-ui
+      - backend-adapters
+    data_in:
+      - browser file or backend asset response
+    data_out:
+      - asset identifier or display URL
+    forbidden_dependencies:
+      - texture-engine internals
+      - tile-project-model internals
+    extension_points:
+      - image optimization
+      - CDN URLs
+    invariant_files:
+      - src/infrastructure/assets/assetInvariants.ts
+    config_files:
+      - src/infrastructure/assets/assetConfig.ts
+
+  - id: backend-adapters
+    name: Backend Adapters
+    layer: infrastructure
+    responsibility: Integrate project persistence, platform imports, assets, and estimate export APIs.
+    owns:
+      - HTTP adapters
+      - request mapping
+      - response mapping
+    exposes:
+      - tileProjectRepository
+      - geometryGateway
+      - impactGateway
+      - estimateGateway
+    depends_on:
+      - persistence
+      - external-contracts
+      - export-contracts
+    used_by:
+      - app-state
+    data_in:
+      - domain requests
+    data_out:
+      - domain-safe responses
+    forbidden_dependencies:
+      - editor-ui components
+      - domain internals
+    extension_points:
+      - event subscriptions
+      - offline queue
+    invariant_files:
+      - src/infrastructure/backend/backendAdapterInvariants.ts
+    config_files:
+      - src/infrastructure/backend/backendConfig.ts
+
+  - id: svg-renderer
+    name: SVG Renderer
+    layer: ui
+    responsibility: Render surfaces, tile instances, textures, and impacts from view models.
+    owns:
+      - SVG composition
+      - clip paths
+      - visual layers
+    exposes:
+      - TileCanvas
+    depends_on:
+      - geometry
+      - tiling-engine
+      - texture-engine
+      - tile-operations
+    used_by:
+      - editor-ui
+    data_in:
+      - derived render descriptors
+    data_out:
+      - SVG UI
+    forbidden_dependencies:
+      - persistence
+      - backend-adapters
+      - domain mutation
+    extension_points:
+      - WebGL renderer
+      - print renderer
+    invariant_files: []
+    config_files:
+      - src/editor-ui/canvas/canvasConstants.ts
+
+  - id: editor-ui
+    name: Editor UI
+    layer: ui
+    responsibility: Present controls and dispatch commands without owning domain rules.
+    owns:
+      - panels
+      - forms
+      - feedback
+      - interaction wiring
+    exposes:
+      - TilePlannerApp
+    depends_on:
+      - app-state
+      - svg-renderer
+      - quantity-calculations
+      - export-contracts
+      - asset-adapter
+    used_by: []
+    data_in:
+      - application state
+      - user interaction
+    data_out:
+      - commands
+    forbidden_dependencies:
+      - domain internal files
+      - persistence internal files
+      - backend implementation details
+    extension_points:
+      - mobile layout
+      - accessibility modes
+    invariant_files: []
+    config_files:
+      - src/editor-ui/uiConfig.ts
+
+  - id: shared-kernel
+    name: Shared Kernel
+    layer: shared
+    responsibility: Provide unit-safe primitive types and identifiers used across modules.
+    owns:
+      - EntityId
+      - Revision
+      - millimeter value types
+      - result types
+    exposes:
+      - shared primitive types
+    depends_on: []
+    used_by:
+      - tile-project-model
+      - external-contracts
+      - geometry
+      - tile-materials
+      - export-contracts
+    data_in: []
+    data_out:
+      - shared primitives
+    forbidden_dependencies:
+      - all feature modules
+    extension_points:
+      - extracted shared package
+    invariant_files:
+      - src/shared/invariants/sharedInvariants.ts
+    config_files:
+      - src/shared/config/units.ts
